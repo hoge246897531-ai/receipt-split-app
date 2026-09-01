@@ -126,32 +126,56 @@ function uid() {
 /* ==========================================================
    Receipt text parsing (best-effort heuristics)
    ========================================================== */
-function parseAmount(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const numRe = /[¥￥]?\s?([0-9][0-9,]{2,})\s?円?/;
+// OCR of Japanese receipts frequently returns full-width digits/symbols
+// (０-９, ￥, ，) — normalize to half-width before any number parsing.
+function normalizeDigits(text) {
+  return text
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/[，]/g, ',')
+    .replace(/[．]/g, '.')
+    .replace(/[￥]/g, '¥');
+}
 
-  const priorityKeywords = ['合計', 'ご請求', 'お会計', '合計金額', 'total', 'TOTAL'];
-  const excludeKeywords = ['小計', '内税', '外税', '消費税', 'お預り', 'おつり', 'お釣り', 'カード', 'ポイント'];
+function parseAmount(rawText) {
+  const text = normalizeDigits(rawText);
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const numRe = /([¥])?\s?([0-9][0-9,]{2,})\s?(円)?/;
+
+  // OCR often inserts stray spaces inside Japanese words (e.g. "合 計"),
+  // so keyword matching is done against the whitespace-collapsed line.
+  const collapse = (s) => s.replace(/\s+/g, '');
+  const priorityRe = /(合計金額|合計|ご請求|お会計|お買上げ|total)/i;
+  const excludeRe = /(小計|内税|外税|消費税|お預り|おつり|お釣り|ポイント|点数)/;
 
   let candidates = [];
   for (const line of lines) {
-    const hasPriority = priorityKeywords.some(k => line.includes(k));
-    const hasExclude = excludeKeywords.some(k => line.includes(k));
+    const collapsed = collapse(line);
+    const hasPriority = priorityRe.test(collapsed);
+    const hasExclude = excludeRe.test(collapsed);
     const m = line.match(numRe);
-    if (m) {
-      const val = parseInt(m[1].replace(/,/g, ''), 10);
-      if (!isNaN(val) && val > 0) {
-        candidates.push({ val, priority: hasPriority && !hasExclude });
-      }
-    }
+    if (!m) continue;
+
+    const digits = m[2].replace(/,/g, '');
+    const val = parseInt(digits, 10);
+    if (isNaN(val) || val <= 0) continue;
+
+    const hasYenMark = !!(m[1] || m[3]);
+    // A long bare number with no ¥/円 mark and no keyword is almost always
+    // a barcode / receipt / phone number, not a price — drop it.
+    if (!hasYenMark && !hasPriority) continue;
+    if (!hasYenMark && digits.length > 6) continue;
+
+    candidates.push({ val, priority: hasPriority && !hasExclude });
   }
+
   const prioritized = candidates.filter(c => c.priority);
   if (prioritized.length) return Math.max(...prioritized.map(c => c.val));
   if (candidates.length) return Math.max(...candidates.map(c => c.val));
   return null;
 }
 
-function parseDate(text) {
+function parseDate(rawText) {
+  const text = normalizeDigits(rawText);
   // yyyy/mm/dd or yyyy-mm-dd or yyyy年mm月dd日
   const m = text.match(/(20\d{2})[\/\-年](\d{1,2})[\/\-月](\d{1,2})/);
   if (m) {
@@ -213,13 +237,17 @@ function getOcrWorker() {
 }
 
 /* ==========================================================
-   Capture flow — the form is shown IMMEDIATELY after taking a
-   photo so the user can start typing the amount right away.
-   OCR runs in the background and only fills the amount field
-   if the user hasn't already typed something themselves.
+   Capture flow — take photos continuously; each shot is queued
+   with a thumbnail and OCR'd in the background. Nothing blocks
+   the camera button, so you can shoot a whole stack of receipts
+   in a row. When ready, "まとめて確認・保存する" steps through
+   the queue one at a time (photo already OCR'd and waiting).
    ========================================================== */
-let captureToken = 0;   // guards against a stale OCR result landing on the wrong entry
+let photoQueue = [];       // { id, blob, previewUrl, ocrText, ocrAmount, ocrDate, ocrStatus }
+let reviewMode = false;    // true while stepping through the queue
+let reviewItemId = null;   // id of the queue item currently shown in the form
 let amountEditedByUser = false;
+let dateEditedByUser = false;
 let selectedPerson = 'A';
 
 function setPersonButtons(person) {
@@ -234,22 +262,89 @@ personToggle.querySelectorAll('.person-btn').forEach(btn => {
 
 fieldAmount.addEventListener('input', () => { amountEditedByUser = true; });
 fieldAmount.addEventListener('focus', () => fieldAmount.select());
+fieldDate.addEventListener('input', () => { dateEditedByUser = true; });
 
-function openQuickEntry(file) {
-  captureToken += 1;
-  const myToken = captureToken;
+function renderQueueStrip() {
+  const strip = el('queue-strip');
+  if (!photoQueue.length) { strip.hidden = true; return; }
+  strip.hidden = false;
+  el('queue-count').textContent = photoQueue.length;
+
+  const thumbsEl = el('queue-thumbs');
+  thumbsEl.innerHTML = '';
+  for (const item of photoQueue) {
+    const div = document.createElement('div');
+    div.className = 'queue-thumb';
+    const img = document.createElement('img');
+    img.src = item.previewUrl;
+    div.appendChild(img);
+    const badgeText = item.ocrStatus === 'pending' ? '…' : item.ocrStatus === 'done' ? '✓' : item.ocrStatus === 'error' ? '!' : '';
+    if (badgeText) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = badgeText;
+      div.appendChild(badge);
+    }
+    thumbsEl.appendChild(div);
+  }
+}
+
+function processQueueItemOcr(item) {
+  if (state.settings.ocrEnabled === false) { item.ocrStatus = 'off'; return; }
+  item.ocrStatus = 'pending';
+  (async () => {
+    try {
+      const worker = await getOcrWorker();
+      const { data } = await worker.recognize(item.blob);
+      const text = (data.text || '').trim();
+      item.ocrText = text;
+      item.ocrAmount = parseAmount(text);
+      item.ocrDate = parseDate(text);
+      item.ocrStatus = 'done';
+    } catch (err) {
+      console.error(err);
+      item.ocrStatus = 'error';
+    }
+    renderQueueStrip();
+    if (reviewItemId === item.id) applyOcrResultToForm(item);
+  })();
+}
+
+function applyOcrResultToForm(item) {
+  if (item.ocrStatus === 'pending') {
+    ocrStatus.textContent = '🔍 自動読み取り中…';
+    return;
+  }
+  fieldRawtext.textContent = item.ocrText || (item.ocrStatus === 'error' ? '(読み取りエラー)' : '(テキストを検出できませんでした)');
+  if (item.ocrAmount != null && !amountEditedByUser) fieldAmount.value = item.ocrAmount;
+  if (item.ocrDate && !dateEditedByUser) fieldDate.value = item.ocrDate;
+
+  if (item.ocrStatus === 'error') {
+    ocrStatus.textContent = '自動読み取りに失敗しました。手入力してください。';
+  } else if (item.ocrStatus === 'off') {
+    ocrStatus.textContent = '';
+  } else {
+    ocrStatus.textContent = item.ocrAmount != null
+      ? '読み取り完了（金額は必ず確認してください）'
+      : '金額を自動検出できませんでした。手入力してください。';
+  }
+}
+
+function openEntryForm(item) {
+  reviewItemId = item ? item.id : null;
   amountEditedByUser = false;
-  state.pendingImageBlob = file || null;
+  dateEditedByUser = false;
+  state.pendingImageBlob = item ? item.blob : null;
 
-  const captureBox = document.querySelector('.capture-box');
-  if (captureBox) captureBox.hidden = true;
+  document.querySelector('.capture-box').hidden = true;
+  el('queue-strip').hidden = true;
   document.querySelector('.quick-add-link').hidden = true;
   saveToastEl.hidden = true;
   receiptForm.hidden = false;
 
-  if (file) {
+  if (item) {
     previewImg.hidden = false;
-    previewImg.src = URL.createObjectURL(file);
+    previewImg.src = item.previewUrl;
   } else {
     previewImg.hidden = true;
   }
@@ -261,61 +356,78 @@ function openQuickEntry(file) {
   fieldRawtext.textContent = '';
   ocrStatus.textContent = '';
 
+  el('btn-cancel').textContent = reviewMode ? 'スキップ（保存しない）' : 'キャンセル';
+
+  const progressEl = el('review-progress');
+  if (reviewMode && item) {
+    const idx = photoQueue.findIndex(q => q.id === item.id);
+    progressEl.textContent = `${idx + 1} / ${photoQueue.length} 件目`;
+  } else {
+    progressEl.textContent = '';
+  }
+
+  if (item) applyOcrResultToForm(item);
+
   setTimeout(() => fieldAmount.focus(), 250);
+}
 
-  if (file && state.settings.ocrEnabled !== false) {
-    runOcrInBackground(file, myToken);
+function closeEntryForm() {
+  receiptForm.hidden = true;
+  state.pendingImageBlob = null;
+  document.querySelector('.capture-box').hidden = false;
+  document.querySelector('.quick-add-link').hidden = false;
+  renderQueueStrip();
+}
+
+// Removes the item currently under review and moves on to the next
+// queued item, or ends the review when the queue is empty.
+function finishCurrentReviewItem() {
+  if (reviewItemId) {
+    photoQueue = photoQueue.filter(q => q.id !== reviewItemId);
+  }
+  if (reviewMode && photoQueue.length) {
+    openEntryForm(photoQueue[0]);
+  } else {
+    reviewMode = false;
+    reviewItemId = null;
+    closeEntryForm();
   }
 }
 
-async function runOcrInBackground(file, myToken) {
-  ocrStatus.textContent = '🔍 自動読み取り中…';
-  try {
-    const worker = await getOcrWorker();
-    const { data } = await worker.recognize(file);
-    const text = data.text || '';
+el('btn-manual-add').addEventListener('click', () => {
+  reviewMode = false;
+  openEntryForm(null);
+});
 
-    // Ignore this result if the user has already moved on to another entry.
-    if (myToken !== captureToken) return;
-
-    fieldRawtext.textContent = text.trim() || '(テキストを検出できませんでした)';
-
-    const amount = parseAmount(text);
-    const date = parseDate(text);
-    if (amount != null && !amountEditedByUser) {
-      fieldAmount.value = amount;
-    }
-    if (date) fieldDate.value = date;
-
-    ocrStatus.textContent = amount != null
-      ? '読み取り完了（金額は必ず確認してください）'
-      : '金額を自動検出できませんでした。手入力してください。';
-  } catch (err) {
-    console.error(err);
-    if (myToken !== captureToken) return;
-    ocrStatus.textContent = '自動読み取りに失敗しました。手入力してください。';
-  }
-}
-
-el('btn-manual-add').addEventListener('click', () => openQuickEntry(null));
+el('btn-review-queue').addEventListener('click', () => {
+  if (!photoQueue.length) return;
+  reviewMode = true;
+  openEntryForm(photoQueue[0]);
+});
 
 photoInput.addEventListener('change', () => {
   const file = photoInput.files[0];
   photoInput.value = '';
   if (!file) return;
-  openQuickEntry(file);
+  const item = {
+    id: uid(),
+    blob: file,
+    previewUrl: URL.createObjectURL(file),
+    ocrText: '', ocrAmount: null, ocrDate: null,
+    ocrStatus: 'pending',
+  };
+  photoQueue.push(item);
+  renderQueueStrip();
+  processQueueItemOcr(item);
 });
 
-el('btn-cancel').addEventListener('click', resetCaptureForm);
-
-function resetCaptureForm() {
-  captureToken += 1; // invalidate any in-flight OCR for this entry
-  receiptForm.hidden = true;
-  state.pendingImageBlob = null;
-  const captureBox = document.querySelector('.capture-box');
-  if (captureBox) captureBox.hidden = false;
-  document.querySelector('.quick-add-link').hidden = false;
-}
+el('btn-cancel').addEventListener('click', () => {
+  if (reviewMode) {
+    finishCurrentReviewItem();
+  } else {
+    closeEntryForm();
+  }
+});
 
 function todaysSavedSummary() {
   const items = state.receipts.filter(r => r.date === todayISO());
@@ -347,13 +459,22 @@ receiptForm.addEventListener('submit', async (e) => {
   state.settings.lastPerson = selectedPerson;
   await dbSetSetting('lastPerson', selectedPerson);
 
-  resetCaptureForm();
+  const personName = selectedPerson === 'A' ? state.settings.nameA : state.settings.nameB;
+  const wasReview = reviewMode;
+
+  if (reviewMode) {
+    finishCurrentReviewItem();
+  } else {
+    closeEntryForm();
+  }
+
   todaysSavedSummary();
 
-  const personName = selectedPerson === 'A' ? state.settings.nameA : state.settings.nameB;
   saveToastEl.hidden = false;
-  saveToastEl.textContent = `✅ ${personName} ${formatYen(amount)} を保存しました`;
-  setTimeout(() => { saveToastEl.hidden = true; }, 2500);
+  saveToastEl.textContent = (wasReview && !reviewMode)
+    ? `✅ ${personName} ${formatYen(amount)} を保存・🎉 全件完了しました`
+    : `✅ ${personName} ${formatYen(amount)} を保存しました`;
+  setTimeout(() => { saveToastEl.hidden = true; }, 2000);
 });
 
 /* ==========================================================

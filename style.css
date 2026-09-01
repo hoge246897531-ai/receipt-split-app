@@ -60,6 +60,51 @@ main { padding: 16px; max-width: 480px; margin: 0 auto; }
 }
 .hint { color: var(--muted); font-size: 13px; margin-top: 14px; }
 
+.queue-strip {
+  background: var(--card-bg);
+  border-radius: 14px;
+  padding: 12px;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+}
+.queue-thumbs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.queue-thumb {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #eee;
+}
+.queue-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.queue-thumb .badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  font-size: 11px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  border-radius: 6px;
+  padding: 1px 3px;
+  line-height: 1.3;
+}
+.queue-strip .btn { width: 100%; }
+
+.review-progress {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.quick-entry-status { display: flex; flex-direction: column; gap: 2px; }
+
 .quick-add-link { text-align: center; margin-top: 10px; }
 .quick-add-link button {
   background: none;

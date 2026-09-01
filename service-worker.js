@@ -1,4 +1,4 @@
-const CACHE_NAME = 'receipt-split-v2';
+const CACHE_NAME = 'receipt-split-v3';
 const ASSETS = [
   './',
   './index.html',

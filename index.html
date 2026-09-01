@@ -25,7 +25,12 @@
     <div class="capture-box">
       <label class="capture-btn" for="photo-input">📷 レシートを撮影</label>
       <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
-      <p class="hint">撮影後すぐ金額を入力できます（自動読み取りは裏で進みます）</p>
+      <p class="hint">連続で何枚でも撮影できます。あとでまとめて金額を確認・保存します</p>
+    </div>
+
+    <div id="queue-strip" class="queue-strip" hidden>
+      <div id="queue-thumbs" class="queue-thumbs"></div>
+      <button type="button" id="btn-review-queue" class="btn primary">✅ まとめて確認・保存する（<span id="queue-count">0</span>件）</button>
     </div>
 
     <div class="quick-add-link">
@@ -38,7 +43,10 @@
     <form id="receipt-form" class="quick-entry" hidden>
       <div class="quick-entry-top">
         <img id="preview-img" class="thumb-small" alt="" hidden>
-        <span id="ocr-status" class="ocr-status"></span>
+        <div class="quick-entry-status">
+          <span id="review-progress" class="review-progress"></span>
+          <span id="ocr-status" class="ocr-status"></span>
+        </div>
       </div>
 
       <div class="person-toggle" id="person-toggle">
