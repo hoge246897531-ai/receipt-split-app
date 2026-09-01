@@ -226,14 +226,54 @@ function getOcrWorker() {
     ocrWorkerPromise = (async () => {
       const worker = await Tesseract.createWorker('jpn');
       try {
-        // Receipts are a narrow uniform block of text; this segmentation
-        // mode reads noticeably better than the "automatic" default.
-        await worker.setParameters({ tessedit_pageseg_mode: '6' });
+        // Receipts are a single column of text with very mixed font sizes
+        // (big header/prices vs small line items) — mode 4 reads this
+        // layout more reliably than the fully-automatic default.
+        await worker.setParameters({ tessedit_pageseg_mode: '4' });
       } catch (e) { /* older tesseract.js: ignore, default PSM still works */ }
       return worker;
     })();
   }
   return ocrWorkerPromise;
+}
+
+// Photographed thermal-paper receipts are often low-contrast and much
+// higher resolution than OCR needs. Converting to grayscale, boosting
+// contrast, and capping the size both improves recognition accuracy and
+// speeds up processing.
+function preprocessForOcr(blob) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1800;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+
+      try {
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const d = imageData.data;
+        const contrast = 1.5; // >1 pushes mid-grays toward black/white
+        for (let i = 0; i < d.length; i += 4) {
+          const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          const v = Math.max(0, Math.min(255, (gray - 128) * contrast + 128));
+          d[i] = d[i + 1] = d[i + 2] = v;
+        }
+        ctx.putImageData(imageData, 0, 0);
+      } catch (e) { /* canvas tainted or unsupported — fall back to plain resize */ }
+
+      canvas.toBlob((out) => resolve(out || blob), 'image/jpeg', 0.92);
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => resolve(blob);
+    img.src = URL.createObjectURL(blob);
+  });
 }
 
 /* ==========================================================
@@ -295,7 +335,8 @@ function processQueueItemOcr(item) {
   (async () => {
     try {
       const worker = await getOcrWorker();
-      const { data } = await worker.recognize(item.blob);
+      const ocrInput = await preprocessForOcr(item.blob);
+      const { data } = await worker.recognize(ocrInput);
       const text = (data.text || '').trim();
       item.ocrText = text;
       item.ocrAmount = parseAmount(text);
