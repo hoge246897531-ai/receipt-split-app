@@ -140,38 +140,69 @@ function parseAmount(rawText) {
   const text = normalizeDigits(rawText);
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const numRe = /([¥])?\s?([0-9][0-9,]{2,})\s?(円)?/;
+  const bareNumRe = /([0-9][0-9,]{1,})/;
 
   // OCR often inserts stray spaces inside Japanese words (e.g. "合 計"),
   // so keyword matching is done against the whitespace-collapsed line.
   const collapse = (s) => s.replace(/\s+/g, '');
   const priorityRe = /(合計金額|合計|ご請求|お会計|お買上げ|total)/i;
   const excludeRe = /(小計|内税|外税|消費税|お預り|おつり|お釣り|ポイント|点数)/;
+  // Lines that are never a price, used to keep the last-resort fallback safe.
+  const noiseLineRe = /(tel|電話|レジ|no\.?|登録番号|累計|カード|ポイント|コード|番号|便|〒)/i;
 
-  let candidates = [];
-  for (const line of lines) {
+  const priorityCandidates = [];
+  const markedCandidates = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const collapsed = collapse(line);
-    const hasPriority = priorityRe.test(collapsed);
-    const hasExclude = excludeRe.test(collapsed);
+    const hasPriority = priorityRe.test(collapsed) && !excludeRe.test(collapsed);
     const m = line.match(numRe);
-    if (!m) continue;
 
+    if (hasPriority) {
+      // Usually the amount is on the same line ("合計   ¥737"), but OCR
+      // sometimes splits a wide label/value gap onto separate lines —
+      // check this line first, then its immediate neighbors.
+      let val = m ? parseInt(m[2].replace(/,/g, ''), 10) : null;
+      if (val == null) {
+        for (const j of [i + 1, i - 1]) {
+          if (j < 0 || j >= lines.length) continue;
+          const bm = lines[j].match(bareNumRe);
+          if (bm) { val = parseInt(bm[1].replace(/,/g, ''), 10); break; }
+        }
+      }
+      if (val != null && val > 0) priorityCandidates.push(val);
+      continue;
+    }
+
+    if (!m) continue;
     const digits = m[2].replace(/,/g, '');
     const val = parseInt(digits, 10);
     if (isNaN(val) || val <= 0) continue;
-
     const hasYenMark = !!(m[1] || m[3]);
-    // A long bare number with no ¥/円 mark and no keyword is almost always
-    // a barcode / receipt / phone number, not a price — drop it.
-    if (!hasYenMark && !hasPriority) continue;
-    if (!hasYenMark && digits.length > 6) continue;
-
-    candidates.push({ val, priority: hasPriority && !hasExclude });
+    if (!hasYenMark) continue;
+    if (digits.length > 6) continue;
+    markedCandidates.push(val);
   }
 
-  const prioritized = candidates.filter(c => c.priority);
-  if (prioritized.length) return Math.max(...prioritized.map(c => c.val));
-  if (candidates.length) return Math.max(...candidates.map(c => c.val));
-  return null;
+  if (priorityCandidates.length) return Math.max(...priorityCandidates);
+  if (markedCandidates.length) return Math.max(...markedCandidates);
+
+  // Last resort: no keyword and no ¥/円 mark was recognized anywhere.
+  // Fall back to the largest plausible (2-6 digit) price-shaped number,
+  // skipping lines that are clearly phone/card/registration numbers etc.
+  let fallback = null;
+  for (const line of lines) {
+    if (noiseLineRe.test(line)) continue;
+    const m = line.match(bareNumRe);
+    if (!m) continue;
+    const digits = m[1].replace(/,/g, '');
+    if (digits.length > 6) continue;
+    const val = parseInt(digits, 10);
+    if (isNaN(val) || val <= 0) continue;
+    if (fallback == null || val > fallback) fallback = val;
+  }
+  return fallback;
 }
 
 function parseDate(rawText) {
