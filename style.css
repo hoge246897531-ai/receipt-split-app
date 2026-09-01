@@ -60,40 +60,108 @@ main { padding: 16px; max-width: 480px; margin: 0 auto; }
 }
 .hint { color: var(--muted); font-size: 13px; margin-top: 14px; }
 
-.preview-area { margin-top: 16px; }
-.preview-area img {
-  width: 100%;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  max-height: 300px;
-  object-fit: contain;
-  background: #fff;
-}
-.ocr-status {
-  text-align: center;
-  padding: 12px;
+.quick-add-link { text-align: center; margin-top: 10px; }
+.quick-add-link button {
+  background: none;
+  border: none;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 6px;
 }
 
-.receipt-form {
+.today-counter {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 12px 0 0;
+}
+
+.save-toast {
+  background: var(--primary);
+  color: #fff;
+  text-align: center;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+/* Quick entry (fast capture form) */
+.quick-entry {
   background: var(--card-bg);
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 16px;
-  margin-top: 12px;
+  margin-top: 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  border: 1px solid var(--border);
 }
-.receipt-form label {
+.quick-entry-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.thumb-small {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #eee;
+  flex-shrink: 0;
+}
+.ocr-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.person-toggle {
+  display: flex;
+  gap: 10px;
+}
+.person-btn {
+  flex: 1;
+  padding: 16px 0;
+  font-size: 18px;
+  font-weight: 700;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+.person-btn.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.amount-input {
+  width: 100%;
+  font-size: 32px;
+  font-weight: 700;
+  text-align: center;
+  padding: 16px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+}
+.amount-input:focus { border-color: var(--primary); outline: none; }
+
+.detail-fold { font-size: 13px; color: var(--muted); }
+.detail-fold summary { cursor: pointer; padding: 4px 0; }
+.detail-fold label {
   display: flex;
   flex-direction: column;
   font-size: 13px;
   color: var(--muted);
   gap: 4px;
+  margin-top: 10px;
 }
-.receipt-form input,
-.receipt-form select {
+.detail-fold input {
   font-size: 16px;
   padding: 10px;
   border: 1px solid var(--border);
@@ -101,7 +169,7 @@ main { padding: 16px; max-width: 480px; margin: 0 auto; }
   color: var(--text);
   background: #fff;
 }
-.raw-text-details { font-size: 13px; color: var(--muted); }
+.raw-text-details { font-size: 13px; color: var(--muted); margin-top: 10px; }
 .raw-text-details pre {
   white-space: pre-wrap;
   word-break: break-all;
@@ -186,6 +254,15 @@ main { padding: 16px; max-width: 480px; margin: 0 auto; }
   gap: 4px;
   margin-bottom: 12px;
 }
+.toggle-row {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  font-size: 14px !important;
+  color: var(--text) !important;
+}
+.toggle-row input { width: auto; }
+
 .summary-card input, .summary-card select {
   font-size: 16px;
   padding: 10px;

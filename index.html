@@ -25,20 +25,32 @@
     <div class="capture-box">
       <label class="capture-btn" for="photo-input">📷 レシートを撮影</label>
       <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
-      <p class="hint">読み取りたいレシートを撮影してください</p>
+      <p class="hint">撮影後すぐ金額を入力できます（自動読み取りは裏で進みます）</p>
     </div>
 
-    <div id="preview-area" class="preview-area" hidden>
-      <img id="preview-img" alt="レシートプレビュー">
-      <div id="ocr-status" class="ocr-status"></div>
+    <div class="quick-add-link">
+      <button type="button" id="btn-manual-add">📝 写真なしで手入力だけで追加</button>
+    </div>
 
-      <form id="receipt-form" class="receipt-form" hidden>
-        <label>支払者
-          <select id="field-person"></select>
-        </label>
-        <label>金額（円）
-          <input type="number" id="field-amount" inputmode="numeric" min="0" step="1" required>
-        </label>
+    <p id="today-counter" class="today-counter"></p>
+    <div id="save-toast" class="save-toast" hidden></div>
+
+    <form id="receipt-form" class="quick-entry" hidden>
+      <div class="quick-entry-top">
+        <img id="preview-img" class="thumb-small" alt="" hidden>
+        <span id="ocr-status" class="ocr-status"></span>
+      </div>
+
+      <div class="person-toggle" id="person-toggle">
+        <button type="button" class="person-btn" data-person="A">A</button>
+        <button type="button" class="person-btn" data-person="B">B</button>
+      </div>
+
+      <input type="text" id="field-amount" class="amount-input" inputmode="numeric" pattern="[0-9]*"
+             placeholder="金額を入力" autocomplete="off" required>
+
+      <details class="detail-fold">
+        <summary>詳細（日付・メモ）</summary>
         <label>日付
           <input type="date" id="field-date" required>
         </label>
@@ -49,12 +61,13 @@
           <summary>読み取ったテキストを見る</summary>
           <pre id="field-rawtext"></pre>
         </details>
-        <div class="form-actions">
-          <button type="button" id="btn-cancel" class="btn secondary">キャンセル</button>
-          <button type="submit" class="btn primary">保存</button>
-        </div>
-      </form>
-    </div>
+      </details>
+
+      <div class="form-actions">
+        <button type="button" id="btn-cancel" class="btn secondary">キャンセル</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
   </section>
 
   <!-- 履歴タブ -->
@@ -111,6 +124,14 @@
         <input type="text" id="setting-nameB" placeholder="B">
       </label>
       <button id="btn-save-names" class="btn primary">保存</button>
+    </div>
+    <div class="summary-card">
+      <h2>読み取り設定</h2>
+      <label class="toggle-row">
+        <input type="checkbox" id="setting-ocr-enabled">
+        自動読み取り（OCR）を使う
+      </label>
+      <p class="explain">レシートの文字は端末内で自動認識を試みますが、精度は完璧ではありません。金額は必ず自分で確認・修正してください。OFFにすると撮影後すぐ手入力のみになり、より高速です。</p>
     </div>
     <div class="summary-card">
       <h2>データ</h2>

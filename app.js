@@ -92,7 +92,7 @@ async function dbClearAll() {
    App state
    ========================================================== */
 const state = {
-  settings: { nameA: 'A', nameB: 'B', rentAmount: 50000, rentPayer: 'A' },
+  settings: { nameA: 'A', nameB: 'B', rentAmount: 50000, rentPayer: 'A', lastPerson: 'A', ocrEnabled: true },
   receipts: [],
   historyMonth: monthKey(new Date()),
   summaryMonth: monthKey(new Date()),
@@ -167,15 +167,16 @@ function parseDate(text) {
 const el = (id) => document.getElementById(id);
 
 const photoInput = el('photo-input');
-const previewArea = el('preview-area');
 const previewImg = el('preview-img');
 const ocrStatus = el('ocr-status');
 const receiptForm = el('receipt-form');
-const fieldPerson = el('field-person');
+const personToggle = el('person-toggle');
 const fieldAmount = el('field-amount');
 const fieldDate = el('field-date');
 const fieldNote = el('field-note');
 const fieldRawtext = el('field-rawtext');
+const todayCounterEl = el('today-counter');
+const saveToastEl = el('save-toast');
 
 /* ==========================================================
    Tabs
@@ -192,55 +193,135 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 /* ==========================================================
-   Capture flow
+   OCR worker (created once, reused for every photo — avoids
+   re-initializing Tesseract for each receipt)
    ========================================================== */
-photoInput.addEventListener('change', async () => {
-  const file = photoInput.files[0];
-  if (!file) return;
-  state.pendingImageBlob = file;
+let ocrWorkerPromise = null;
+function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = (async () => {
+      const worker = await Tesseract.createWorker('jpn');
+      try {
+        // Receipts are a narrow uniform block of text; this segmentation
+        // mode reads noticeably better than the "automatic" default.
+        await worker.setParameters({ tessedit_pageseg_mode: '6' });
+      } catch (e) { /* older tesseract.js: ignore, default PSM still works */ }
+      return worker;
+    })();
+  }
+  return ocrWorkerPromise;
+}
 
-  previewArea.hidden = false;
-  receiptForm.hidden = true;
-  previewImg.src = URL.createObjectURL(file);
-  ocrStatus.textContent = 'テキストを読み取り中…（初回は言語データのダウンロードに時間がかかります）';
+/* ==========================================================
+   Capture flow — the form is shown IMMEDIATELY after taking a
+   photo so the user can start typing the amount right away.
+   OCR runs in the background and only fills the amount field
+   if the user hasn't already typed something themselves.
+   ========================================================== */
+let captureToken = 0;   // guards against a stale OCR result landing on the wrong entry
+let amountEditedByUser = false;
+let selectedPerson = 'A';
 
+function setPersonButtons(person) {
+  selectedPerson = person;
+  personToggle.querySelectorAll('.person-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.person === person);
+  });
+}
+personToggle.querySelectorAll('.person-btn').forEach(btn => {
+  btn.addEventListener('click', () => setPersonButtons(btn.dataset.person));
+});
+
+fieldAmount.addEventListener('input', () => { amountEditedByUser = true; });
+fieldAmount.addEventListener('focus', () => fieldAmount.select());
+
+function openQuickEntry(file) {
+  captureToken += 1;
+  const myToken = captureToken;
+  amountEditedByUser = false;
+  state.pendingImageBlob = file || null;
+
+  const captureBox = document.querySelector('.capture-box');
+  if (captureBox) captureBox.hidden = true;
+  document.querySelector('.quick-add-link').hidden = true;
+  saveToastEl.hidden = true;
+  receiptForm.hidden = false;
+
+  if (file) {
+    previewImg.hidden = false;
+    previewImg.src = URL.createObjectURL(file);
+  } else {
+    previewImg.hidden = true;
+  }
+
+  setPersonButtons(state.settings.lastPerson || 'A');
+  fieldAmount.value = '';
+  fieldDate.value = todayISO();
+  fieldNote.value = '';
+  fieldRawtext.textContent = '';
+  ocrStatus.textContent = '';
+
+  setTimeout(() => fieldAmount.focus(), 250);
+
+  if (file && state.settings.ocrEnabled !== false) {
+    runOcrInBackground(file, myToken);
+  }
+}
+
+async function runOcrInBackground(file, myToken) {
+  ocrStatus.textContent = '🔍 自動読み取り中…';
   try {
-    const result = await Tesseract.recognize(file, 'jpn', {
-      logger: (m) => {
-        if (m.status === 'recognizing text') {
-          ocrStatus.textContent = `読み取り中… ${Math.round(m.progress * 100)}%`;
-        }
-      },
-    });
-    const text = result.data.text || '';
-    ocrStatus.textContent = '読み取り完了。内容を確認してください。';
+    const worker = await getOcrWorker();
+    const { data } = await worker.recognize(file);
+    const text = data.text || '';
+
+    // Ignore this result if the user has already moved on to another entry.
+    if (myToken !== captureToken) return;
+
+    fieldRawtext.textContent = text.trim() || '(テキストを検出できませんでした)';
 
     const amount = parseAmount(text);
     const date = parseDate(text);
+    if (amount != null && !amountEditedByUser) {
+      fieldAmount.value = amount;
+    }
+    if (date) fieldDate.value = date;
 
-    fieldAmount.value = amount ?? '';
-    fieldDate.value = date ?? todayISO();
-    fieldNote.value = '';
-    fieldRawtext.textContent = text.trim() || '(テキストを検出できませんでした)';
-    receiptForm.hidden = false;
+    ocrStatus.textContent = amount != null
+      ? '読み取り完了（金額は必ず確認してください）'
+      : '金額を自動検出できませんでした。手入力してください。';
   } catch (err) {
     console.error(err);
-    ocrStatus.textContent = '自動読み取りに失敗しました。金額を手入力してください。';
-    fieldAmount.value = '';
-    fieldDate.value = todayISO();
-    fieldNote.value = '';
-    fieldRawtext.textContent = '(読み取りエラー)';
-    receiptForm.hidden = false;
+    if (myToken !== captureToken) return;
+    ocrStatus.textContent = '自動読み取りに失敗しました。手入力してください。';
   }
+}
+
+el('btn-manual-add').addEventListener('click', () => openQuickEntry(null));
+
+photoInput.addEventListener('change', () => {
+  const file = photoInput.files[0];
+  photoInput.value = '';
+  if (!file) return;
+  openQuickEntry(file);
 });
 
 el('btn-cancel').addEventListener('click', resetCaptureForm);
 
 function resetCaptureForm() {
-  photoInput.value = '';
-  previewArea.hidden = true;
+  captureToken += 1; // invalidate any in-flight OCR for this entry
   receiptForm.hidden = true;
   state.pendingImageBlob = null;
+  const captureBox = document.querySelector('.capture-box');
+  if (captureBox) captureBox.hidden = false;
+  document.querySelector('.quick-add-link').hidden = false;
+}
+
+function todaysSavedSummary() {
+  const items = state.receipts.filter(r => r.date === todayISO());
+  if (!items.length) { todayCounterEl.textContent = ''; return; }
+  const total = items.reduce((s, r) => s + r.amount, 0);
+  todayCounterEl.textContent = `本日 ${items.length}件保存済み（合計 ${formatYen(total)}）`;
 }
 
 receiptForm.addEventListener('submit', async (e) => {
@@ -252,7 +333,7 @@ receiptForm.addEventListener('submit', async (e) => {
   }
   const receipt = {
     id: uid(),
-    person: fieldPerson.value,
+    person: selectedPerson,
     amount,
     date: fieldDate.value || todayISO(),
     note: fieldNote.value.trim(),
@@ -262,8 +343,17 @@ receiptForm.addEventListener('submit', async (e) => {
   };
   await dbPutReceipt(receipt);
   state.receipts = await dbGetAllReceipts();
+
+  state.settings.lastPerson = selectedPerson;
+  await dbSetSetting('lastPerson', selectedPerson);
+
   resetCaptureForm();
-  alert('保存しました');
+  todaysSavedSummary();
+
+  const personName = selectedPerson === 'A' ? state.settings.nameA : state.settings.nameB;
+  saveToastEl.hidden = false;
+  saveToastEl.textContent = `✅ ${personName} ${formatYen(amount)} を保存しました`;
+  setTimeout(() => { saveToastEl.hidden = true; }, 2500);
 });
 
 /* ==========================================================
@@ -419,8 +509,13 @@ el('btn-save-names').addEventListener('click', async () => {
   state.settings.nameB = nameB;
   await dbSetSetting('nameA', nameA);
   await dbSetSetting('nameB', nameB);
-  populatePersonSelect();
+  updatePersonButtonLabels();
   alert('保存しました');
+});
+
+el('setting-ocr-enabled').addEventListener('change', async () => {
+  state.settings.ocrEnabled = el('setting-ocr-enabled').checked;
+  await dbSetSetting('ocrEnabled', state.settings.ocrEnabled);
 });
 
 el('btn-export').addEventListener('click', async () => {
@@ -444,8 +539,10 @@ el('btn-clear-all').addEventListener('click', async () => {
   }
 });
 
-function populatePersonSelect() {
-  fieldPerson.innerHTML = `<option value="A">${state.settings.nameA}</option><option value="B">${state.settings.nameB}</option>`;
+function updatePersonButtonLabels() {
+  personToggle.querySelectorAll('.person-btn').forEach(b => {
+    b.textContent = b.dataset.person === 'A' ? state.settings.nameA : state.settings.nameB;
+  });
 }
 
 /* ==========================================================
@@ -456,19 +553,29 @@ async function init() {
   state.settings.nameB = await dbGetSetting('nameB', 'B');
   state.settings.rentAmount = await dbGetSetting('rentAmount', 50000);
   state.settings.rentPayer = await dbGetSetting('rentPayer', 'A');
+  state.settings.lastPerson = await dbGetSetting('lastPerson', 'A');
+  state.settings.ocrEnabled = await dbGetSetting('ocrEnabled', true);
 
   el('setting-nameA').value = state.settings.nameA;
   el('setting-nameB').value = state.settings.nameB;
+  el('setting-ocr-enabled').checked = state.settings.ocrEnabled !== false;
 
-  populatePersonSelect();
+  updatePersonButtonLabels();
   fieldDate.value = todayISO();
 
   state.receipts = await dbGetAllReceipts();
   renderHistory();
   renderSummary();
+  todaysSavedSummary();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  }
+
+  // Pre-warm the OCR worker in the background so the first photo doesn't
+  // have to wait for the language model to load.
+  if (state.settings.ocrEnabled !== false) {
+    getOcrWorker().catch(() => {});
   }
 }
 
