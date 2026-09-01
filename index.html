@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f6f4f">
+<title>生活費精算</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="生活費精算">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <h1>生活費精算</h1>
+</header>
+
+<main>
+
+  <!-- 撮影タブ -->
+  <section id="tab-capture" class="tab-panel active">
+    <div class="capture-box">
+      <label class="capture-btn" for="photo-input">📷 レシートを撮影</label>
+      <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
+      <p class="hint">読み取りたいレシートを撮影してください</p>
+    </div>
+
+    <div id="preview-area" class="preview-area" hidden>
+      <img id="preview-img" alt="レシートプレビュー">
+      <div id="ocr-status" class="ocr-status"></div>
+
+      <form id="receipt-form" class="receipt-form" hidden>
+        <label>支払者
+          <select id="field-person"></select>
+        </label>
+        <label>金額（円）
+          <input type="number" id="field-amount" inputmode="numeric" min="0" step="1" required>
+        </label>
+        <label>日付
+          <input type="date" id="field-date" required>
+        </label>
+        <label>メモ（任意）
+          <input type="text" id="field-note" placeholder="例：スーパーA">
+        </label>
+        <details class="raw-text-details">
+          <summary>読み取ったテキストを見る</summary>
+          <pre id="field-rawtext"></pre>
+        </details>
+        <div class="form-actions">
+          <button type="button" id="btn-cancel" class="btn secondary">キャンセル</button>
+          <button type="submit" class="btn primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 履歴タブ -->
+  <section id="tab-history" class="tab-panel">
+    <div class="month-selector">
+      <button id="month-prev" class="btn small">◀</button>
+      <span id="month-label"></span>
+      <button id="month-next" class="btn small">▶</button>
+    </div>
+    <ul id="history-list" class="history-list"></ul>
+    <p id="history-empty" class="empty-hint" hidden>この月のレシートはまだありません</p>
+  </section>
+
+  <!-- 集計タブ -->
+  <section id="tab-summary" class="tab-panel">
+    <div class="month-selector">
+      <button id="summary-month-prev" class="btn small">◀</button>
+      <span id="summary-month-label"></span>
+      <button id="summary-month-next" class="btn small">▶</button>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-row"><span id="summary-nameA-label"></span><span id="summary-totalA">¥0</span></div>
+      <div class="summary-row"><span id="summary-nameB-label"></span><span id="summary-totalB">¥0</span></div>
+      <div class="summary-row total"><span>合計</span><span id="summary-total">¥0</span></div>
+    </div>
+
+    <div class="summary-card">
+      <h2>折半差額</h2>
+      <p id="summary-split-explain" class="explain"></p>
+    </div>
+
+    <div class="summary-card">
+      <h2>家賃精算</h2>
+      <label>家賃額（円）
+        <input type="number" id="rent-amount" inputmode="numeric" min="0" step="1">
+      </label>
+      <label>家賃支払者
+        <select id="rent-payer"></select>
+      </label>
+      <p id="summary-final" class="final-result"></p>
+      <p id="summary-final-detail" class="explain"></p>
+    </div>
+  </section>
+
+  <!-- 設定タブ -->
+  <section id="tab-settings" class="tab-panel">
+    <div class="summary-card">
+      <h2>名前の設定</h2>
+      <label>Aさんの名前
+        <input type="text" id="setting-nameA" placeholder="A">
+      </label>
+      <label>Bさんの名前
+        <input type="text" id="setting-nameB" placeholder="B">
+      </label>
+      <button id="btn-save-names" class="btn primary">保存</button>
+    </div>
+    <div class="summary-card">
+      <h2>データ</h2>
+      <p class="explain">すべてのデータはこの端末内（ブラウザ）にのみ保存されます。</p>
+      <button id="btn-export" class="btn secondary">データをJSONで書き出す</button>
+      <button id="btn-clear-all" class="btn danger">全データを削除</button>
+    </div>
+  </section>
+
+</main>
+
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="tab-capture">📷<span>撮影</span></button>
+  <button class="tab-btn" data-tab="tab-history">🧾<span>履歴</span></button>
+  <button class="tab-btn" data-tab="tab-summary">💰<span>集計</span></button>
+  <button class="tab-btn" data-tab="tab-settings">⚙️<span>設定</span></button>
+</nav>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

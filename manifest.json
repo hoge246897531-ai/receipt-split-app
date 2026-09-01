@@ -1,0 +1,13 @@
+{
+  "name": "生活費精算アプリ",
+  "short_name": "生活費精算",
+  "description": "レシートを撮影して生活費の折半・家賃精算を自動計算します",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f4f0",
+  "theme_color": "#2f6f4f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
